@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: manhattan_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-manhattan}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-manhattan}
+      POSTGRES_DB: ${POSTGRES_DB:-manhattan}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-manhattan} -d ${POSTGRES_DB:-manhattan}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: manhattan_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Sobrescribe el host de la BD para apuntar al servicio "db" de la red de compose
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-manhattan}:${POSTGRES_PASSWORD:-manhattan}@db:5432/${POSTGRES_DB:-manhattan}
+    volumes:
+      - uploads_data:/code/uploads
+    ports:
+      - "8000:8000"
+
+volumes:
+  db_data:
+  uploads_data:
