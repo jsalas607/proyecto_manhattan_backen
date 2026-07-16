@@ -93,7 +93,14 @@ async def main() -> None:
         assert set(todos) == {rA, rB}, todos
         print("9. superadmin ve TODOS los restaurantes OK")
 
-        print("\n==> AISLAMIENTO VERIFICADO (9/9)")
+        # nadie puede auto-eliminarse (ni superadmin ni dueño)
+        me_super = (await ac.get("/auth/me", headers=S)).json()["id"]
+        me_maria = (await ac.get("/auth/me", headers=M)).json()["id"]
+        assert (await ac.delete(f"/admin/users/{me_super}", headers=S)).status_code == 403
+        assert (await ac.delete(f"/admin/users/{me_maria}", headers=M)).status_code == 403
+        print("10. auto-eliminación bloqueada (superadmin y dueño) OK")
+
+        print("\n==> AISLAMIENTO VERIFICADO (10/10)")
 
     await engine.dispose()
 

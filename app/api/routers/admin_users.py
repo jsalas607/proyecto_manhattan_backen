@@ -112,6 +112,8 @@ async def eliminar_usuario(
     u = await db.get(User, user_id)
     if u is None:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if u.id == current.id:
+        raise HTTPException(status_code=403, detail="No puedes eliminar tu propia cuenta")
     if u.is_admin or u.is_superadmin:
         raise HTTPException(status_code=403, detail="No se puede eliminar un administrador")
     if not current.is_superadmin and not await _es_empleado_de(db, current.id, u.id):
