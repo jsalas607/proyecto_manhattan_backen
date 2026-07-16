@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.deps import require_admin, require_superadmin
-from app.models.organization import Membership, Restaurant, User
+from app.models.organization import Membership, Restaurant, User  # noqa: F401
 from app.schemas.base import CamelModel
 
 router = APIRouter(prefix="/admin/users", tags=["admin-usuarios"])
@@ -27,6 +27,74 @@ class UsuarioCreadoOut(CamelModel):
     username: str
     is_admin: bool
     nombre: str
+
+
+class DuenoOut(CamelModel):
+    id: str
+    username: str
+    nombre: str
+    is_active: bool
+    num_restaurantes: int
+
+
+class ActivoIn(CamelModel):
+    is_active: bool
+
+
+@router.get("", response_model=list[DuenoOut])
+async def listar_duenos(
+    _: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lista los dueños (clientes que pagan el software) con cuántos
+    restaurantes tiene cada uno. Solo la plataforma."""
+    result = await db.execute(
+        select(User, func.count(Restaurant.id))
+        .outerjoin(Restaurant, Restaurant.owner_id == User.id)
+        .where(User.is_admin.is_(True), User.is_superadmin.is_(False))
+        .group_by(User.id)
+        .order_by(User.username)
+    )
+    return [
+        DuenoOut(
+            id=u.id,
+            username=u.username,
+            nombre=u.name or u.username,
+            is_active=u.is_active,
+            num_restaurantes=n,
+        )
+        for u, n in result.all()
+    ]
+
+
+@router.patch("/{user_id}/activo", response_model=DuenoOut)
+async def set_activo(
+    user_id: str,
+    body: ActivoIn,
+    current: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Activa/desactiva a un dueño. Desactivado no puede entrar y su inquilino
+    queda congelado (sus empleados tampoco), pero no se borra nada."""
+    u = await db.get(User, user_id)
+    if u is None:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if u.id == current.id:
+        raise HTTPException(status_code=403, detail="No puedes desactivar tu propia cuenta")
+    if u.is_superadmin:
+        raise HTTPException(status_code=403, detail="No puedes desactivar a un superadmin")
+    u.is_active = body.is_active
+    await db.commit()
+    n = await db.scalar(
+        select(func.count(Restaurant.id)).where(Restaurant.owner_id == u.id)
+    )
+    return DuenoOut(
+        id=u.id,
+        username=u.username,
+        nombre=u.name or u.username,
+        is_active=u.is_active,
+        num_restaurantes=n or 0,
+    )
 
 
 async def _es_empleado_de(db: AsyncSession, owner_id: str, target_id: str) -> bool:

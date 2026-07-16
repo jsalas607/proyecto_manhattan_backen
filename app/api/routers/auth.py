@@ -27,6 +27,11 @@ async def _authenticate(db: AsyncSession, username: str, password: str) -> User:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario o contraseña inválidos"
         )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cuenta desactivada. Contacta al administrador.",
+        )
     return user
 
 

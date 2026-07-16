@@ -10,6 +10,8 @@ class UserOut(BaseModel):
     id: str
     username: str
     is_admin: bool
+    # La app usa is_superadmin para mostrar el hub de administración de dueños.
+    is_superadmin: bool = False
     title: str = ""
     name: str = ""
     lastname: str = ""

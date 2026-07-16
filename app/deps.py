@@ -25,6 +25,12 @@ async def get_current_user(
     user = await db.get(User, payload["sub"])
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
+    if not user.is_active:
+        # Invalida los tokens ya emitidos: si no, un desactivado seguiría
+        # entrando hasta que expire su sesión.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Cuenta desactivada"
+        )
     return user
 
 
@@ -67,6 +73,31 @@ async def es_dueno_o_super(db: AsyncSession, current: User, restaurant_id: str) 
     return await _es_dueno(db, current.id, restaurant_id)
 
 
+async def _owner_activo(db: AsyncSession, restaurant_id: str) -> bool:
+    """True si el restaurante no tiene dueño o su dueño sigue activo.
+    Si el dueño se desactivó (dejó de pagar) se congela todo el inquilino:
+    sus empleados tampoco pueden entrar."""
+    owner_id = await db.scalar(
+        select(Restaurant.owner_id).where(Restaurant.id == restaurant_id)
+    )
+    if owner_id is None:
+        return True
+    activo = await db.scalar(select(User.is_active).where(User.id == owner_id))
+    return bool(activo)
+
+
+async def _asegurar_inquilino_activo(
+    db: AsyncSession, current: User, restaurant_id: str
+) -> None:
+    if current.is_superadmin:
+        return
+    if not await _owner_activo(db, restaurant_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esta cuenta está desactivada. Contacta al administrador.",
+        )
+
+
 async def require_restaurant_access(
     rid: str = Path(...),
     current: User = Depends(get_current_user),
@@ -75,6 +106,7 @@ async def require_restaurant_access(
     """Superadmin, o dueño del restaurante, o miembro del mismo."""
     if current.is_superadmin:
         return current
+    await _asegurar_inquilino_activo(db, current, rid)
     if await _es_dueno(db, current.id, rid):
         return current
     membership = await _get_membership(db, current.id, rid)
@@ -107,6 +139,7 @@ def require_permission(permiso: str):
     ) -> User:
         if current.is_superadmin:
             return current
+        await _asegurar_inquilino_activo(db, current, rid)
         if await _es_dueno(db, current.id, rid):
             return current
         membership = await _get_membership(db, current.id, rid)

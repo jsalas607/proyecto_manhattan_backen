@@ -19,6 +19,8 @@ class User(Base):
     # is_superadmin=True → plataforma (ve/gestiona todo, crea dueños).
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_superadmin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Desactivar corta el acceso (p. ej. un dueño que dejó de pagar) sin borrar datos.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Datos de perfil (UserProfile en los mocks)
     title: Mapped[str] = mapped_column(String, default="")
