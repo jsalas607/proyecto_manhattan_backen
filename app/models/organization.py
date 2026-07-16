@@ -15,7 +15,10 @@ class User(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("u"))
     username: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    # is_admin=True → "dueño" (ve la lista de SUS restaurantes, puede crearlos).
+    # is_superadmin=True → plataforma (ve/gestiona todo, crea dueños).
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_superadmin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Datos de perfil (UserProfile en los mocks)
     title: Mapped[str] = mapped_column(String, default="")
@@ -34,6 +37,10 @@ class Restaurant(Base):
     __tablename__ = "restaurants"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("r"))
+    # Dueño del restaurante (multi-inquilino). Nullable: SET NULL si se borra el dueño.
+    owner_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True
+    )
     title: Mapped[str] = mapped_column(String, nullable=False)
     name: Mapped[str] = mapped_column(String, default="")
     description: Mapped[str] = mapped_column(String, default="")

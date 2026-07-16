@@ -4,7 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.deps import get_current_user, require_admin, require_permission, require_restaurant_access
+from app.deps import (
+    get_current_user,
+    require_admin,
+    require_permission,
+    require_restaurant_access,
+    require_restaurant_owner,
+)
 from app.models.organization import (
     Membership,
     Restaurant,
@@ -54,9 +60,13 @@ async def list_restaurants(
     current: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
     stmt = select(Restaurant).options(selectinload(Restaurant.payment_methods))
-    if not current.is_admin:
+    if current.is_superadmin:
+        pass  # la plataforma ve todos
+    elif current.is_admin:
+        stmt = stmt.where(Restaurant.owner_id == current.id)  # dueño: solo los suyos
+    else:
         sub = select(Membership.restaurant_id).where(Membership.user_id == current.id)
-        stmt = stmt.where(Restaurant.id.in_(sub))
+        stmt = stmt.where(Restaurant.id.in_(sub))  # empleado: donde tiene membresía
     result = await db.execute(stmt)
     return [_to_out(r) for r in result.scalars().all()]
 
@@ -64,10 +74,11 @@ async def list_restaurants(
 @router.post("/restaurants", response_model=RestaurantOut, status_code=status.HTTP_201_CREATED)
 async def create_restaurant(
     body: RestaurantCreate,
-    _: User = Depends(require_admin),
+    current: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     r = Restaurant(
+        owner_id=current.id,  # el que lo crea es su dueño
         title=body.title,
         name=body.name,
         description=body.description,
@@ -122,10 +133,11 @@ async def update_restaurant(
 
 @router.post("/restaurants/{rid}/duplicate", response_model=RestaurantOut, status_code=201)
 async def duplicate_restaurant(
-    rid: str, _: User = Depends(require_admin), db: AsyncSession = Depends(get_db)
+    rid: str, current: User = Depends(require_restaurant_owner), db: AsyncSession = Depends(get_db)
 ):
     src = await _get_full(db, rid)
     copy = Restaurant(
+        owner_id=src.owner_id or current.id,  # la copia mantiene al dueño
         title=f"{src.title} (copia)",
         name=src.name,
         description=src.description,
@@ -144,7 +156,7 @@ async def duplicate_restaurant(
 
 @router.delete("/restaurants/{rid}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_restaurant(
-    rid: str, _: User = Depends(require_admin), db: AsyncSession = Depends(get_db)
+    rid: str, _: User = Depends(require_restaurant_owner), db: AsyncSession = Depends(get_db)
 ):
     r = await db.get(Restaurant, rid)
     if r is None:

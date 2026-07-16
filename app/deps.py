@@ -6,7 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.security import decode_access_token
-from app.models.organization import Membership, Role, User
+from app.models.organization import Membership, Restaurant, Role, User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
 
@@ -29,8 +29,16 @@ async def get_current_user(
 
 
 async def require_admin(current: User = Depends(get_current_user)) -> User:
+    """Dueño o superadmin (los que pueden tener/crear restaurantes)."""
     if not current.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requiere admin global")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requiere admin")
+    return current
+
+
+async def require_superadmin(current: User = Depends(get_current_user)) -> User:
+    """Solo la plataforma (crea dueños, ve todo)."""
+    if not current.is_superadmin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requiere superadmin")
     return current
 
 
@@ -43,13 +51,23 @@ async def _get_membership(db: AsyncSession, user_id: str, restaurant_id: str) ->
     return result.scalar_one_or_none()
 
 
+async def _es_dueno(db: AsyncSession, user_id: str, restaurant_id: str) -> bool:
+    """True si `user_id` es el dueño del restaurante `restaurant_id`."""
+    owner_id = await db.scalar(
+        select(Restaurant.owner_id).where(Restaurant.id == restaurant_id)
+    )
+    return owner_id is not None and owner_id == user_id
+
+
 async def require_restaurant_access(
     rid: str = Path(...),
     current: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Valida que el usuario sea admin global o tenga membership en el restaurante de la ruta."""
-    if current.is_admin:
+    """Superadmin, o dueño del restaurante, o miembro del mismo."""
+    if current.is_superadmin:
+        return current
+    if await _es_dueno(db, current.id, rid):
         return current
     membership = await _get_membership(db, current.id, rid)
     if membership is None:
@@ -57,15 +75,31 @@ async def require_restaurant_access(
     return current
 
 
+async def require_restaurant_owner(
+    rid: str = Path(...),
+    current: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Solo el dueño del restaurante (o superadmin). Para acciones destructivas."""
+    if current.is_superadmin:
+        return current
+    if await _es_dueno(db, current.id, rid):
+        return current
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No eres el dueño de este restaurante")
+
+
 def require_permission(permiso: str):
-    """Factory de dependencia: exige un permiso concreto en el restaurante de la ruta (admin omite)."""
+    """Factory: exige un permiso concreto en el restaurante de la ruta.
+    Superadmin y el dueño del restaurante omiten el chequeo (tienen todo)."""
 
     async def checker(
         rid: str = Path(...),
         current: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
     ) -> User:
-        if current.is_admin:
+        if current.is_superadmin:
+            return current
+        if await _es_dueno(db, current.id, rid):
             return current
         membership = await _get_membership(db, current.id, rid)
         if membership is None:

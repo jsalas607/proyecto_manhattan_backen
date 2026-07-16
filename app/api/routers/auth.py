@@ -57,7 +57,11 @@ async def my_restaurants(
     current: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
     if current.is_admin:
-        result = await db.execute(select(Restaurant))
+        # superadmin ve todos; dueño ve SOLO los suyos.
+        stmt = select(Restaurant)
+        if not current.is_superadmin:
+            stmt = stmt.where(Restaurant.owner_id == current.id)
+        result = await db.execute(stmt)
         restos = result.scalars().all()
         return MyRestaurantsResponse(
             is_admin=True,

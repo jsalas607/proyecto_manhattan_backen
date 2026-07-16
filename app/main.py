@@ -22,6 +22,7 @@ async def bootstrap_admin() -> None:
             username=settings.ADMIN_USERNAME,
             password_hash=hash_password(settings.ADMIN_PASSWORD),
             is_admin=True,
+            is_superadmin=True,
             title="Administrador",
             name="Admin",
         )
