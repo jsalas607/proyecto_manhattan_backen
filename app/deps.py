@@ -59,6 +59,14 @@ async def _es_dueno(db: AsyncSession, user_id: str, restaurant_id: str) -> bool:
     return owner_id is not None and owner_id == user_id
 
 
+async def es_dueno_o_super(db: AsyncSession, current: User, restaurant_id: str) -> bool:
+    """True si `current` manda sobre TODO el restaurante: superadmin o su dueño.
+    Los routers lo usan para decidir qué puede ver/tocar un gerente vs el dueño."""
+    if current.is_superadmin:
+        return True
+    return await _es_dueno(db, current.id, restaurant_id)
+
+
 async def require_restaurant_access(
     rid: str = Path(...),
     current: User = Depends(get_current_user),

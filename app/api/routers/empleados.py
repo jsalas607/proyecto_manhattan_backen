@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.security import hash_password
-from app.deps import require_permission, require_restaurant_access
+from app.deps import es_dueno_o_super, require_permission, require_restaurant_access
 from app.models.organization import Membership, Role, RolePermission, User
 from app.schemas.empleado import (
     EmpleadoCreate,
@@ -21,14 +21,56 @@ router = APIRouter(prefix="/restaurants/{rid}", tags=["empleados"])
 
 
 # --- Empleados (memberships) ---
+def _es_gerente(m: Membership) -> bool:
+    """True si la membresía tiene un rol con `administrar_restaurante` (puede
+    entrar a Gestionar empleado). Solo el dueño manda sobre los gerentes."""
+    if m.role is None:
+        return False
+    return any(p.permiso == "administrar_restaurante" for p in m.role.permissions)
+
+
+async def _get_membership_con_rol(db: AsyncSession, empleado_id: str, rid: str) -> Membership:
+    result = await db.execute(
+        select(Membership)
+        .where(Membership.id == empleado_id, Membership.restaurant_id == rid)
+        .options(selectinload(Membership.role).selectinload(Role.permissions))
+    )
+    m = result.scalar_one_or_none()
+    if m is None:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    return m
+
+
+async def _proteger_gerente(
+    db: AsyncSession, current: User, rid: str, m: Membership, accion: str
+) -> None:
+    """Un gerente no puede tocar a otro gerente (ni a sí mismo: él también lo es).
+    Solo el dueño/superadmin manda sobre los gerentes."""
+    if _es_gerente(m) and not await es_dueno_o_super(db, current, rid):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Solo el dueño puede {accion} a un administrador del restaurante",
+        )
+
+
 @router.get("/empleados", response_model=list[EmpleadoOut])
 async def list_empleados(
-    rid: str, _: User = Depends(require_restaurant_access), db: AsyncSession = Depends(get_db)
+    rid: str,
+    current: User = Depends(require_restaurant_access),
+    db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Membership).where(Membership.restaurant_id == rid))
+    """El dueño ve a todos; un gerente solo ve a los empleados que NO son gerentes."""
+    result = await db.execute(
+        select(Membership)
+        .where(Membership.restaurant_id == rid)
+        .options(selectinload(Membership.role).selectinload(Role.permissions))
+    )
+    memberships = list(result.scalars().all())
+    if not await es_dueno_o_super(db, current, rid):
+        memberships = [m for m in memberships if not _es_gerente(m)]
     return [
         EmpleadoOut(id=m.id, user_id=m.user_id, nombre=m.nombre, rol_id=m.role_id)
-        for m in result.scalars().all()
+        for m in memberships
     ]
 
 
@@ -130,12 +172,11 @@ async def edit_empleado(
     rid: str,
     empleado_id: str,
     body: EmpleadoUpdate,
-    _: User = Depends(require_permission("crear_empleado")),
+    current: User = Depends(require_permission("crear_empleado")),
     db: AsyncSession = Depends(get_db),
 ):
-    m = await db.get(Membership, empleado_id)
-    if m is None or m.restaurant_id != rid:
-        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    m = await _get_membership_con_rol(db, empleado_id, rid)
+    await _proteger_gerente(db, current, rid, m, "editar")
     m.nombre = body.nombre
     m.role_id = body.rol_id
     await db.commit()
@@ -147,12 +188,11 @@ async def edit_empleado(
 async def remove_empleado(
     rid: str,
     empleado_id: str,
-    _: User = Depends(require_permission("crear_empleado")),
+    current: User = Depends(require_permission("crear_empleado")),
     db: AsyncSession = Depends(get_db),
 ):
-    m = await db.get(Membership, empleado_id)
-    if m is None or m.restaurant_id != rid:
-        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    m = await _get_membership_con_rol(db, empleado_id, rid)
+    await _proteger_gerente(db, current, rid, m, "quitar")
     await db.delete(m)
     await db.commit()
 
