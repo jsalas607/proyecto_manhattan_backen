@@ -34,6 +34,7 @@ from app.models.organization import (
     User,
 )
 from app.models.sales import Venta, VentaItem, VentaPago
+from app.models.stock import StockMovimiento
 
 __all__ = [
     "Caja",
@@ -67,4 +68,5 @@ __all__ = [
     "Venta",
     "VentaItem",
     "VentaPago",
+    "StockMovimiento",
 ]

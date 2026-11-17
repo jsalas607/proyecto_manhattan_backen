@@ -32,9 +32,9 @@ deleted: flip it back and everything returns.
 ```
 app/
   core/        config, database, security (JWT + bcrypt), timeutil, permissions catalog
-  models/      SQLAlchemy models — 38 tables
+  models/      SQLAlchemy models — 39 tables
   schemas/     Pydantic. camelCase via CamelModel, matching the Dart models 1:1
-  api/routers/ 15 routers (auth, restaurants, menu, mesas, pedidos, despacho, ventas,
+  api/routers/ 16 routers (auth, restaurants, menu, mesas, pedidos, despacho, ventas, stock,
                inventory, cartera, empleados, admin_users, profile, notifications, uploads, ws)
   ws/          ConnectionManager for WebSocket broadcasts
   deps.py      auth & permission dependencies — where the rules above live
@@ -87,6 +87,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe test_isolation.py   # two owners cannot see or touch each other
 .\.venv\Scripts\python.exe test_jerarquia.py   # managers can't see/remove other managers
 .\.venv\Scripts\python.exe test_superadmin.py  # owner listing, passwords, deactivation & tenant freeze
+.\.venv\Scripts\python.exe test_stock.py       # barcodes, stock ledger, sales that deduct stock, reports, Gecofi import
 ```
 
 Each one asserts the exact status codes (`403` vs `404` vs `409`), because the app relies on them —
@@ -105,9 +106,40 @@ alembic upgrade head
 | `0002_drop_producto_tipo` | Drops an unused product column. |
 | `0003_owner_isolation` | `restaurants.owner_id` + `users.is_superadmin`; promotes existing admins to superadmin. |
 | `0004_user_is_active` | `users.is_active` for deactivating customers. |
+| `0005_stock_retail` | Retail: barcode/cost/stock on `productos`, price and cost frozen on `venta_items`, `stock_movimientos` ledger. |
 
 Migrations use `ADD COLUMN IF NOT EXISTS` so they're idempotent: a fresh database already has the
 columns from the baseline's `create_all`, while an existing one gets them applied.
+
+## Retail (liquor stores, convenience stores)
+
+The same restaurant can also sell **packaged products with their own stock**, scanned by barcode.
+A product opts in with `controlaStock: true`; dishes keep working exactly as before.
+
+- **Scan:** `GET /restaurants/{rid}/productos/barcode/{code}` (any member, e.g. the cashier) and
+  `GET .../productos/buscar?q=` (name contains, or barcode starts with). A USB scanner types the code
+  plus Enter, so the client only needs a focused text field.
+- **Barcodes are unique per restaurant** (`409` on a duplicate); products without one can coexist.
+- **Every stock change goes through the ledger** (`stock_movimientos`, see `services/stock.py`):
+  `entrada` (purchase, updates the weighted-average cost), `venta`, `salida` (shrinkage, own use…),
+  `ajuste` (physical count) and `importacion`. `PATCH /productos/{id}` never touches stock.
+- **Sales freeze `precioUnitario` and `costoUnitario`** on each item and deduct stock in the same
+  transaction (`SELECT … FOR UPDATE`). Stock may go negative rather than block a sale of a bottle
+  that is physically there; the inventory report counts those products.
+- **Reports:** `GET .../reportes/inventario` (value at cost and at sale price, per category) and
+  `GET .../reportes/ventas?desde=&hasta=&horaCorte=6` (sales, cost, profit, margin, best sellers and
+  stock that left without being sold). `horaCorte` moves the start of the business day for venues
+  that close after midnight.
+- **Import from Gecofi:** `POST .../import/gecofi` (owner only), idempotent — categories match by
+  name, products by barcode or name. `scripts/import_gecofi.py <folder> <rid>` sends the exported
+  `categorias.json` + `productos.json`.
+
+| Endpoint | Permission |
+|---|---|
+| `productos/barcode/{code}`, `productos/buscar` | restaurant access |
+| `stock/entradas`, `stock/salidas`, `stock/ajustes`, `stock/movimientos`, `stock/alertas`, `reportes/inventario` | `ver_inventario` |
+| `reportes/ventas` | `ver_cartera` |
+| `import/gecofi` | owner |
 
 ## WebSockets
 
