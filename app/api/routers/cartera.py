@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,7 +17,7 @@ from app.models.cartera import (
     PerdidaProducto,
     ServicioCategoria,
 )
-from app.models.common import utcnow
+from app.models.common import gen_id, utcnow
 from app.models.organization import User
 from app.models.sales import Venta, VentaPago
 from app.schemas.cartera import (
@@ -40,13 +42,24 @@ def _hoy_rango():
 
 
 async def _get_caja(db: AsyncSession, rid: str) -> Caja:
+    """La caja del restaurante; la crea cerrada la primera vez.
+
+    Cartera pide varias cosas a la vez al abrirse: con un SELECT y luego un
+    INSERT, dos peticiones creaban dos cajas y desde ahí todo fallaba con
+    MultipleResultsFound. El INSERT ... ON CONFLICT DO NOTHING sobre el
+    índice único `uq_caja_restaurant` hace que solo una gane.
+    """
     stmt = (
         select(Caja).where(Caja.restaurant_id == rid).options(selectinload(Caja.montos_iniciales))
     )
     caja = (await db.execute(stmt)).scalar_one_or_none()
     if caja is None:
-        caja = Caja(restaurant_id=rid, status="cerrada")
-        db.add(caja)
+        insert = sqlite_insert if db.get_bind().dialect.name == "sqlite" else pg_insert
+        await db.execute(
+            insert(Caja)
+            .values(id=gen_id("caja"), restaurant_id=rid, status="cerrada")
+            .on_conflict_do_nothing(index_elements=["restaurant_id"])
+        )
         await db.commit()
         caja = (await db.execute(stmt)).scalar_one()
     return caja
