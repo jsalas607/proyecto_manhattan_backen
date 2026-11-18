@@ -43,6 +43,29 @@ class ProductoCreate(CamelModel):
     categoria_id: str
     foto: str | None = None
     ingredientes: list[IngredienteRecetaIn] = []
+    # Venta al detalle (opcionales: un plato de restaurante no los usa)
+    codigo_barras: str | None = None
+    costo: float = 0.0
+    controla_stock: bool = False
+    stock_inicial: float = 0.0
+    stock_minimo: float = 0.0
+    unidad: str = "und"
+
+
+class ProductoUpdate(CamelModel):
+    """Edición parcial: solo se cambian los campos enviados. El stock no se
+    edita aquí: se mueve con entradas, salidas o ajustes para que quede en el
+    kárdex."""
+
+    nombre: str | None = None
+    precio: float | None = None
+    categoria_id: str | None = None
+    foto: str | None = None
+    codigo_barras: str | None = None
+    costo: float | None = None
+    controla_stock: bool | None = None
+    stock_minimo: float | None = None
+    unidad: str | None = None
 
 
 class ProductoOut(CamelModel):
@@ -53,3 +76,9 @@ class ProductoOut(CamelModel):
     foto: str | None = None
     visible: bool
     ingredientes: list[IngredienteRecetaOut] = []
+    codigo_barras: str | None = None
+    costo: float = 0.0
+    controla_stock: bool = False
+    stock: float = 0.0
+    stock_minimo: float = 0.0
+    unidad: str = "und"

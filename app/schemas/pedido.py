@@ -7,6 +7,8 @@ class ItemPedidoIn(CamelModel):
     categoria_id: str = ""
     cantidad: int = 1
     config: str = ""
+    # Solo para ventas: si no viene, se usa el precio del producto.
+    precio_unitario: float | None = None
 
 
 class ItemPedidoOut(CamelModel):

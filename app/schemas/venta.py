@@ -20,6 +20,8 @@ class VentaItemOut(CamelModel):
     categoria_id: str
     cantidad: int
     config: str
+    precio_unitario: float | None = None
+    costo_unitario: float | None = None
 
 
 class VentaCreate(CamelModel):

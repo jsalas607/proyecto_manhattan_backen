@@ -10,6 +10,7 @@ from app.core.timeutil import day_bounds_utc, local_today
 from app.deps import require_permission, require_restaurant_access
 from app.models.organization import User
 from app.models.sales import Venta, VentaItem, VentaPago
+from app.services.stock import mover_stock, productos_por_id
 from app.schemas.venta import (
     PagoMetodoOut,
     VentaCreate,
@@ -35,6 +36,8 @@ def _out(v: Venta) -> VentaOut:
                 categoria_id=i.categoria_id,
                 cantidad=i.cantidad,
                 config=i.config,
+                precio_unitario=i.precio_unitario,
+                costo_unitario=i.costo_unitario,
             )
             for i in v.items
         ],
@@ -55,9 +58,14 @@ async def _get_full(db: AsyncSession, vid: str) -> Venta:
 async def registrar_venta(
     rid: str,
     body: VentaCreate,
-    _: User = Depends(require_permission("cobrar_mesa")),
+    current: User = Depends(require_permission("cobrar_mesa")),
     db: AsyncSession = Depends(get_db),
 ):
+    """Registra la venta. Para cada ítem que es un producto de este restaurante
+    congela su precio y costo (para la utilidad) y, si controla stock, lo
+    descuenta y lo anota en el kárdex. Ítems que no corresponden a un producto
+    (p. ej. clientes viejos con ids de mock) se guardan como antes."""
+    prods = await productos_por_id(db, rid, [i.producto_id for i in body.items])
     v = Venta(
         restaurant_id=rid,
         mesa_numero=body.mesa_numero,
@@ -65,18 +73,29 @@ async def registrar_venta(
         nombre_cliente=body.nombre_cliente,
         total=body.total,
     )
-    v.items = [
-        VentaItem(
-            producto_id=i.producto_id,
-            producto_nombre=i.producto_nombre,
-            categoria_id=i.categoria_id,
-            cantidad=i.cantidad,
-            config=i.config,
+    items = []
+    for i in body.items:
+        p = prods.get(i.producto_id)
+        precio = i.precio_unitario if i.precio_unitario is not None else (p.precio if p else None)
+        items.append(
+            VentaItem(
+                producto_id=i.producto_id,
+                producto_nombre=i.producto_nombre,
+                categoria_id=i.categoria_id or (p.categoria_id if p else ""),
+                cantidad=i.cantidad,
+                config=i.config,
+                precio_unitario=precio,
+                costo_unitario=p.costo if p else None,
+            )
         )
-        for i in body.items
-    ]
+    v.items = items
     v.pagos = [VentaPago(metodo=pg.metodo, monto=pg.monto) for pg in body.pagos]
     db.add(v)
+    await db.flush()
+    for i in body.items:
+        p = prods.get(i.producto_id)
+        if p is not None and p.controla_stock:
+            mover_stock(db, p, "venta", -i.cantidad, venta_id=v.id, usuario_id=current.id)
     await db.commit()
     return _out(await _get_full(db, v.id))
 

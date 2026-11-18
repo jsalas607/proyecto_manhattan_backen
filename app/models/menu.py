@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Float, ForeignKey, String
+from sqlalchemy import Boolean, Float, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -19,6 +19,11 @@ class Categoria(Base):
 
 class Producto(Base):
     __tablename__ = "productos"
+    # Un código de barras no se repite dentro del mismo restaurante. Los NULL no
+    # chocan entre sí (platos de restaurante sin código).
+    __table_args__ = (
+        Index("uq_producto_codigo_barras", "restaurant_id", "codigo_barras", unique=True),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("prod"))
     restaurant_id: Mapped[str] = mapped_column(
@@ -31,6 +36,14 @@ class Producto(Base):
     )
     foto: Mapped[str | None] = mapped_column(String, nullable=True)
     visible: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # --- Venta al detalle (licoreras, tiendas): producto con stock propio ---
+    codigo_barras: Mapped[str | None] = mapped_column(String, nullable=True)
+    costo: Mapped[float] = mapped_column(Float, default=0.0)  # costo promedio de compra
+    controla_stock: Mapped[bool] = mapped_column(Boolean, default=False)
+    stock: Mapped[float] = mapped_column(Float, default=0.0)
+    stock_minimo: Mapped[float] = mapped_column(Float, default=0.0)
+    unidad: Mapped[str] = mapped_column(String, default="und")
 
     ingredientes: Mapped[list["ProductoIngrediente"]] = relationship(
         back_populates="producto", cascade="all, delete-orphan", order_by="ProductoIngrediente.orden"

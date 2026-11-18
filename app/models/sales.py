@@ -40,6 +40,10 @@ class VentaItem(Base):
     categoria_id: Mapped[str] = mapped_column(String, default="")
     cantidad: Mapped[int] = mapped_column(Integer, default=1)
     config: Mapped[str] = mapped_column(String, default="")
+    # Precio y costo congelados al momento de la venta: permiten calcular la
+    # utilidad aunque luego cambien los precios. NULL en ventas anteriores.
+    precio_unitario: Mapped[float | None] = mapped_column(Float, nullable=True)
+    costo_unitario: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     venta: Mapped["Venta"] = relationship(back_populates="items")
 
