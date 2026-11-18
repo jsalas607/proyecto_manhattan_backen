@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String
+from sqlalchemy import DateTime, Float, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -9,10 +9,12 @@ from app.models.common import gen_id, utcnow
 
 class Caja(Base):
     __tablename__ = "caja"
+    # Una sola caja por restaurante (ver migración 0006_caja_unica).
+    __table_args__ = (Index("uq_caja_restaurant", "restaurant_id", unique=True),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("caja"))
     restaurant_id: Mapped[str] = mapped_column(
-        ForeignKey("restaurants.id", ondelete="CASCADE"), index=True, nullable=False
+        ForeignKey("restaurants.id", ondelete="CASCADE"), nullable=False
     )
     status: Mapped[str] = mapped_column(String, default="cerrada")  # abierta|cerrada
     abierta_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
