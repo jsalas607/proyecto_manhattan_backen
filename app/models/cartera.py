@@ -26,6 +26,8 @@ class Caja(Base):
 
 class CajaMontoInicial(Base):
     __tablename__ = "caja_montos_iniciales"
+    # Un monto por método (ver migración 0007_caja_por_turno).
+    __table_args__ = (Index("uq_caja_monto_metodo", "caja_id", "metodo", unique=True),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("cmi"))
     caja_id: Mapped[str] = mapped_column(
