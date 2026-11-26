@@ -153,9 +153,18 @@ async def main() -> None:
         assert r.status_code == 200 and r.json()["status"] == "abierta", r.text
         r = await ac.get(f"/restaurants/{rid}/caja/totales?metodos=efectivo,nequi", headers=H)
         tot = {x["name"]: x["total"] for x in r.json()}
-        # efectivo = 100000 inicial + 36000 venta de hoy
+        # la venta del paso 6 fue antes de abrir la caja: no cuenta en este turno
+        assert tot["efectivo"] == 100000, tot
+        r = await ac.post(f"/restaurants/{rid}/ventas", headers=H, json={
+            "mesaNumero": 3, "orden": 2, "nombreCliente": "Carlos", "items": [],
+            "pagos": [{"metodo": "efectivo", "monto": 36000}], "total": 36000,
+        })
+        assert r.status_code == 201, r.text
+        r = await ac.get(f"/restaurants/{rid}/caja/totales?metodos=efectivo,nequi", headers=H)
+        tot = {x["name"]: x["total"] for x in r.json()}
+        # efectivo = 100000 inicial + 36000 vendidos con la caja abierta
         assert tot["efectivo"] == 136000, tot
-        print("8. caja abierta + totales (incluye ventas del día) OK")
+        print("8. caja abierta + totales (solo ventas del turno) OK")
         ok += 1
 
         # 9) permisos: usuario sin acceso -> 403

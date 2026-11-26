@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +39,19 @@ router = APIRouter(prefix="/restaurants/{rid}", tags=["cartera"])
 
 def _hoy_rango():
     return day_bounds_utc(local_today())
+
+
+def _rango_caja(caja: Caja):
+    """Rango que cuentan la caja y las estadísticas.
+
+    Con la caja abierta es el turno: desde que se abrió hasta ahora. Antes se
+    usaba el día calendario y, en un negocio nocturno, las ventas de la
+    madrugada (del turno anterior, ya cerrado) se sumaban a la caja que se
+    abría por la tarde. Con la caja cerrada se muestra el día de hoy.
+    """
+    if caja.status == "abierta" and caja.abierta_en is not None:
+        return caja.abierta_en, utcnow()
+    return _hoy_rango()
 
 
 async def _get_caja(db: AsyncSession, rid: str) -> Caja:
@@ -89,15 +102,22 @@ async def abrir_caja(
     _: User = Depends(require_permission("ver_cartera")),
     db: AsyncSession = Depends(get_db),
 ):
-    caja = await _get_caja(db, rid)
+    await _get_caja(db, rid)
+    # Bloquea la fila: dos toques seguidos en «Abrir caja» duplicaban los
+    # montos iniciales y reiniciaban la hora de apertura.
+    caja = (
+        await db.execute(select(Caja).where(Caja.restaurant_id == rid).with_for_update())
+    ).scalar_one()
+    if caja.status == "abierta":
+        await db.commit()
+        return _caja_out(await _get_caja(db, rid))
     caja.status = "abierta"
     caja.abierta_en = utcnow()
-    for m in list(caja.montos_iniciales):
-        await db.delete(m)
-    caja.montos_iniciales = [
-        CajaMontoInicial(metodo=k, monto=v) for k, v in body.montos_iniciales.items()
-    ]
+    await db.execute(delete(CajaMontoInicial).where(CajaMontoInicial.caja_id == caja.id))
+    for k, v in body.montos_iniciales.items():
+        db.add(CajaMontoInicial(caja_id=caja.id, metodo=k, monto=v))
     await db.commit()
+    db.expire_all()
     return _caja_out(await _get_caja(db, rid))
 
 
@@ -110,9 +130,9 @@ async def cerrar_caja(
     caja = await _get_caja(db, rid)
     caja.status = "cerrada"
     caja.abierta_en = None
-    for m in list(caja.montos_iniciales):
-        await db.delete(m)
+    await db.execute(delete(CajaMontoInicial).where(CajaMontoInicial.caja_id == caja.id))
     await db.commit()
+    db.expire_all()
     return _caja_out(await _get_caja(db, rid))
 
 
@@ -129,7 +149,7 @@ async def totales_por_metodo(
         return [PaymentMethodTotalOut(name=m, total=0.0) for m in lista]
 
     montos = {m.metodo: m.monto for m in caja.montos_iniciales}
-    inicio, fin = _hoy_rango()
+    inicio, fin = _rango_caja(caja)
     result = await db.execute(
         select(VentaPago.metodo, VentaPago.monto)
         .join(Venta, Venta.id == VentaPago.venta_id)
@@ -151,7 +171,7 @@ async def get_stats(
     _: User = Depends(require_permission("ver_cartera")),
     db: AsyncSession = Depends(get_db),
 ):
-    inicio, fin = _hoy_rango()
+    inicio, fin = _rango_caja(await _get_caja(db, rid))
     ventas = (
         await db.execute(
             select(Venta).where(Venta.restaurant_id == rid, Venta.fecha >= inicio, Venta.fecha <= fin)
